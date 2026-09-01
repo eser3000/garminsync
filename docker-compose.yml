@@ -1,0 +1,18 @@
+services:
+  garminsync:
+    build: .
+    container_name: garminsync
+    restart: unless-stopped
+    environment:
+      PORT: 1234
+      DATA_DIR: /data
+      TZ: ${TZ:-Asia/Shanghai}
+    volumes:
+      - ./data:/data
+      - ./app:/app/app
+    ports:
+      - "1234:1234"
+
+# bridge + 端口映射：容器走 Docker 内置网桥，无需独立 IP。
+# 访问 http://飞牛NAS的IP:1234（即 http://10.10.200.20:1234）
+# 飞牛自带浏览器、局域网设备均可访问。

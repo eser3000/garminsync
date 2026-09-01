@@ -1,0 +1,129 @@
+:root {
+  --bg: #0f1419;
+  --card: #1a212b;
+  --card2: #222c38;
+  --accent: #38e08a;
+  --accent2: #2f9bff;
+  --text: #e6edf3;
+  --muted: #8b98a5;
+  --danger: #ff6b6b;
+  --border: #2c3744;
+}
+* { box-sizing: border-box; }
+html, body { max-width: 100%; }
+body {
+  margin: 0;
+  font-family: -apple-system, "Segoe UI", "PingFang SC", Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  overflow-x: hidden;
+}
+#app { max-width: 980px; width: 100%; margin: 0 auto; padding: 24px 16px 60px; }
+.topbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; }
+.topbar h1 { font-size: 22px; margin: 0; }
+.grid { display: flex; flex-direction: column; align-items: center; gap: 16px; }
+/* PC 宽屏：一排两个模块，每列仍为 600px */
+@media (min-width: 1260px) {
+  #app { max-width: 1280px; }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(2, 600px);
+    justify-content: center;
+    align-items: start;
+    gap: 16px;
+  }
+}
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 18px;
+  min-width: 0;
+  width: 600px;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+.card h2 { font-size: 16px; margin: 0 0 12px; }
+.card h3 { font-size: 13px; color: var(--muted); margin: 16px 0 6px; }
+.log-head { display: flex; align-items: center; justify-content: space-between; margin-top: 14px; }
+.clear-btn {
+  width: auto;
+  margin: 0;
+  padding: 3px 10px;
+  font-size: 12px;
+  font-weight: 500;
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+}
+.clear-btn:hover { color: var(--danger); border-color: var(--danger); }
+input, select {
+  width: 100%;
+  padding: 10px 12px;
+  margin: 6px 0;
+  border-radius: 9px;
+  border: 1px solid var(--border);
+  background: var(--card2);
+  color: var(--text);
+  font-size: 14px;
+}
+input:focus, select:focus { outline: none; border-color: var(--accent2); }
+button {
+  width: 100%;
+  padding: 11px;
+  margin-top: 8px;
+  border: none;
+  border-radius: 9px;
+  background: var(--accent);
+  color: #06251a;
+  font-weight: 600;
+  font-size: 14px;
+  cursor: pointer;
+  transition: opacity .15s;
+}
+button:hover { opacity: .9; }
+button.ghost {
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  margin-top: 10px;
+}
+.switch { display: flex; align-items: center; gap: 8px; margin: 10px 0; }
+.switch input { width: auto; }
+.status {
+  font-size: 13px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--card2);
+  margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.avatar-wrap { position: relative; display: inline-block; width: 28px; height: 28px; flex-shrink: 0; }
+.avatar { position: relative; width: 28px; height: 28px; border-radius: 50%; object-fit: cover; vertical-align: middle; }
+.avatar-fallback { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: var(--card); border: 1px solid var(--accent2); color: var(--accent2); font-size: 13px; font-weight: 600; border-radius: 50%; }
+.status.ok { color: var(--accent); }
+.status.no { color: var(--muted); }
+.status.err { color: var(--danger); }
+.muted { color: var(--muted); font-size: 13px; }
+.msg { font-size: 13px; margin-top: 8px; min-height: 16px; color: var(--accent); }
+.msg.err { color: var(--danger); }
+.log { list-style: none; padding: 0; margin: 0; max-height: 200px; overflow: auto; }
+.log li { font-size: 12px; padding: 6px 8px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; gap: 10px; min-width: 0; }
+.log li > span { min-width: 0; }
+.log li > span:last-child { word-break: break-all; }
+.log li > span:first-child { white-space: nowrap; flex-shrink: 0; }
+.badge { padding: 1px 7px; border-radius: 6px; font-size: 11px; }
+.badge.success { background: rgba(56,224,138,.15); color: var(--accent); }
+.badge.partial { background: rgba(255,193,7,.15); color: #ffc107; }
+.badge.error { background: rgba(255,107,107,.15); color: var(--danger); }
+.badge.running { background: rgba(47,155,255,.15); color: var(--accent2); }
+.toast {
+  position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%);
+  background: var(--card2); border: 1px solid var(--border); color: var(--text);
+  padding: 10px 18px; border-radius: 10px; font-size: 14px; z-index: 99;
+  box-shadow: 0 8px 24px rgba(0,0,0,.4);
+}
+

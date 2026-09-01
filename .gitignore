@@ -1,0 +1,22 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+*.egg-info/
+
+# ---- 项目数据 / 凭据（切勿提交） ----
+.env
+*.db
+*.sqlite3
+*.sqlite
+data/
+.codebuddy/
+
+# ---- 日志 ----
+*.log
+
+# ---- OS ----
+.DS_Store
+Thumbs.db

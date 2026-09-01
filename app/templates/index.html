@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>佳明同步工具</title>
+  <link rel="stylesheet" href="/static/css/style.css?v=2" />
+</head>
+<body>
+  <div id="app">
+    <div id="dashboard">
+      <header class="topbar">
+        <h1>🏃 佳明中国区数据同步</h1>
+      </header>
+
+      <div class="grid">
+        <!-- 佳明账户（中国区 + 国际区） -->
+        <section class="card">
+          <h2>① 佳明账户</h2>
+          <h3>中国区</h3>
+          <div id="china-status" class="status"></div>
+          <div id="china-form">
+            <input id="china-email" type="email" placeholder="佳明中国区邮箱" />
+            <input id="china-pass" type="password" placeholder="密码" />
+            <button id="china-login-btn">登录</button>
+          </div>
+          <div id="china-mfa" hidden>
+            <p class="muted">已发送短信验证码，请输入：</p>
+            <input id="china-code" placeholder="短信验证码" />
+            <button id="china-mfa-btn">验证</button>
+          </div>
+          <button id="china-logout-btn" class="ghost" hidden>退出中国区账户</button>
+          <hr style="border: none; border-top: 1px solid var(--border, #444); margin: 16px 0" />
+          <h3>国际区</h3>
+          <div id="intl-status" class="status"></div>
+          <div id="intl-form">
+            <input id="intl-email" type="email" placeholder="Garmin 国际区邮箱" />
+            <input id="intl-pass" type="password" placeholder="密码" />
+            <button id="intl-login-btn">登录</button>
+          </div>
+          <div id="intl-mfa" hidden>
+            <p class="muted">请输入验证码：</p>
+            <input id="intl-code" placeholder="验证码" />
+            <button id="intl-mfa-btn">验证</button>
+          </div>
+          <button id="intl-logout-btn" class="ghost" hidden>退出国际区账户</button>
+        </section>
+
+        <!-- iGPSPORT 迹驰同步 -->
+        <section class="card">
+          <h2>② iGPSPORT 迹驰同步（中国区 → iGPSPORT）</h2>
+          <p class="muted">新活动下载 FIT 后自动上传到 iGPSPORT 码表 App。登录后即随活动同步一并执行，频率与数据范围同佳明活动同步，无需单独设置。</p>
+          <div id="igpsport-status" class="status"></div>
+          <div id="igpsport-form">
+            <input id="igpsport-username" placeholder="iGPSPORT 账号（手机号）" />
+            <input id="igpsport-password" type="password" placeholder="密码" />
+            <button id="igpsport-login-btn">登录</button>
+          </div>
+          <button id="igpsport-logout-btn" class="ghost" hidden>退出该账户</button>
+        </section>
+
+        <!-- 同步设置 -->
+        <section class="card">
+          <h2>③ 同步设置</h2>
+          <label>同步频率
+            <select id="freq"></select>
+          </label>
+          <label>同步时间范围
+            <select id="window"></select>
+          </label>
+          <label class="switch">
+            <input id="enabled" type="checkbox" /> 启用自动同步
+          </label>
+          <button id="settings-save">保存设置</button>
+          <div id="settings-msg" class="msg"></div>
+        </section>
+
+        <!-- 同步状态 -->
+        <section class="card">
+          <h2>④ 同步状态</h2>
+          <div id="sync-status" class="status"></div>
+          <button id="sync-now">立即同步</button>
+          <h3 class="log-head">最近日志<button id="sync-log-clear" class="clear-btn">清空日志</button></h3>
+          <ul id="sync-log" class="log"></ul>
+        </section>
+
+        <!-- 健康数据同步 -->
+        <section class="card">
+          <h2>⑤ 佳明健康数据同步（中国区 → 国际区）</h2>
+          <p class="muted">同步范围：睡眠 / 心率 / 压力 / 身体电量 / 血氧 / 呼吸 / 步数（中国区每日监控数据，原始 FIT 转发）</p>
+          <label class="switch">
+            <input id="health-enabled" type="checkbox" /> 启用自动同步
+          </label>
+          <label>同步周期
+            <select id="health-window"></select>
+          </label>
+          <p class="muted">固定每天 03:00 自动同步，中国区需已登录，国际区未登录时仅下载不传</p>
+          <div id="health-sync-status" class="status"></div>
+          <button id="health-sync-now">立即同步健康数据</button>
+          <h3 class="log-head">最近日志<button id="health-log-clear" class="clear-btn">清空日志</button></h3>
+          <ul id="health-log" class="log"></ul>
+        </section>
+
+        <!-- 小米体重同步 -->
+        <section class="card">
+          <h2>⑥ 小米体重同步（体脂秤 → 佳明）</h2>
+          <div id="xiaomi-status" class="status"></div>
+          <div id="xiaomi-form">
+            <input id="xiaomi-account" placeholder="小米账号（手机号 / 邮箱）" />
+            <input id="xiaomi-password" type="password" placeholder="小米密码" />
+            <button id="xiaomi-acct-login-btn">登录</button>
+          </div>
+          <div id="xiaomi-acct-step" hidden>
+            <img id="xiaomi-captcha-img" alt="图形验证码" hidden style="max-height: 120px; display: block; margin: 8px 0; border: 1px solid var(--border, #444); border-radius: 4px" />
+            <p id="xiaomi-step-hint" class="muted"></p>
+            <input id="xiaomi-step-code" placeholder="输入验证码" />
+            <button id="xiaomi-step-btn">提交验证码</button>
+          </div>
+          <button id="xiaomi-logout-btn" class="ghost" hidden>退出该账户</button>
+          <hr style="border: none; border-top: 1px solid var(--border, #444); margin: 14px 0" />
+          <label class="switch">
+            <input id="weight-enabled" type="checkbox" /> 启用自动同步
+          </label>
+          <label>同步周期
+            <select id="weight-window"></select>
+          </label>
+          <p class="muted">固定每天 00:00 自动同步，同时上传国际区 + 中国区（无需选择目标）</p>
+          <div id="weight-sync-status" class="status"></div>
+          <button id="weight-sync-now">立即同步体重</button>
+          <h3 class="log-head">最近日志<button id="weight-log-clear" class="clear-btn">清空日志</button></h3>
+          <ul id="weight-log" class="log"></ul>
+        </section>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast" hidden></div>
+  <script src="/static/js/app.js?v=20260901c"></script>
+</body>
+</html>
