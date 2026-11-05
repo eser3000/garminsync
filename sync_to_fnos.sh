@@ -7,15 +7,24 @@ SRC="/Users/andy/Documents/garmin"
 SHARE="Download"                      # 飞牛OS SMB 共享名
 FNOS_IP="10.10.200.20"
 FNOS_USER="eser3000"
-MNT="/Volumes/${SHARE}"               # 本地挂载点
-DST="${MNT}/garmin"                   # 飞牛OS 上的目标目录
+VOL_MNT="/Volumes/${SHARE}"           # Finder/系统已挂载时优先使用
+OWN_MNT="${HOME}/fnos/${SHARE}"       # 未挂载时挂到用户可写目录（/Volumes 需 root）
 
-# 若共享未挂载则尝试挂载（已挂载则跳过）
-if ! mount | grep -q "on ${MNT} (smbfs"; then
-  echo "挂载 ${SHARE} (${FNOS_IP}) ..."
+# ① 已有挂载直接用（无需密码、无需建目录）
+if mount | grep -q "on ${VOL_MNT} (smbfs"; then
+  MNT="${VOL_MNT}"
+else
+  MNT="${OWN_MNT}"
   mkdir -p "${MNT}"
-  mount_smbfs "//${FNOS_USER}@${FNOS_IP}/${SHARE}" "${MNT}"
+  if ! mount | grep -q "on ${MNT} (smbfs"; then
+    echo "挂载 //${FNOS_USER}@${FNOS_IP}/${SHARE} -> ${MNT}（需输入密码）..."
+    if ! mount_smbfs "//${FNOS_USER}@${FNOS_IP}/${SHARE}" "${MNT}"; then
+      echo "挂载失败：请确认飞牛OS(${FNOS_IP})在线且 SMB 可达，或先在 Finder 中挂载共享" >&2
+      exit 1
+    fi
+  fi
 fi
+DST="${MNT}/garmin"                   # 飞牛OS 上的目标目录
 
 echo "同步 ${SRC} -> ${DST}"
 rsync -a --delete \
