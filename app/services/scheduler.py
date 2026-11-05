@@ -119,24 +119,38 @@ class SyncScheduler:
     def _daily_due(self, kind: str, hour: int) -> bool:
         """kind 任务是否到期：固定每天本地 hour 点执行一次。
 
-        到期条件：最近一次完成时间早于「今天本地 hour 点对应的 UTC 时刻」。
-        内存无记录（如进程重启）时从 DB 兜底读取最近一次该 kind 的日志。
+        判定阈值是「最近一次应执行的时刻」：本地时间还没到今天 hour 点时，
+        最近一次应执行的是昨天 hour 点；已过则是今天 hour 点。只有最近一次
+        完成时间早于该时刻才算到期。
+
+        注意：不能直接用「今天 hour 点」当阈值——在 00:00~hour:00 之间它还是
+        未来时刻，任何刚完成的同步都会被判为"早于阈值"，导致每个 30 秒轮询
+        周期都重复执行一次（模块⑤曾表现为每半分钟自动同步一次）。
         """
+        # 固定按东八区计算，再换算成 UTC 与 last.finished_at（UTC）比较，
+        # 不依赖容器/宿主机系统时区。
+        now = now_cn()
+        local_target = now.replace(
+            hour=hour, minute=0, second=0, microsecond=0
+        )
+        if now < local_target:
+            local_target -= timedelta(days=1)
+        target_utc = local_target - CN_OFFSET
+
         last = self._last[kind]
         if last is None or not last.finished_at:
             with self.Session() as s:
+                # 只取已完成的日志：进程被中断可能留下 finished_at 为 NULL
+                # 的 running 记录，若拿它当基准会导致每轮都判定到期。
                 last = (
                     s.query(SyncLog)
                     .filter_by(kind=kind)
+                    .filter(SyncLog.finished_at.isnot(None))
                     .order_by(SyncLog.id.desc())
                     .first()
                 )
-        # 固定按东八区计算「今天 hour 点」，再换算成 UTC 与 last.finished_at（UTC）比较，
-        # 不依赖容器/宿主机系统时区。
-        local_target = now_cn().replace(
-            hour=hour, minute=0, second=0, microsecond=0
-        )
-        target_utc = local_target - CN_OFFSET
+            if last is not None:
+                self._last[kind] = last  # 兜底结果写回内存，避免每轮查库
         if last is None or not last.finished_at:
             return True  # 从未同步过：部署后立即执行一次
         return last.finished_at < target_utc
