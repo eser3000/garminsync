@@ -1,9 +1,14 @@
-"""健康数据同步编排：对比佳明中国区与国际区的全量每日监控数据，互相补全。
+"""模块⑤编排：佳明中国区 ⇄ 国际区**全量数据**对比、互相补全。
 
-同步范围：睡眠 / 心率 / 压力 / 身体电量 / 血氧 / 呼吸 / 步数等每日监控数据
-（Garmin 手表记录的 wellness / daily monitoring 原始 FIT）。
+覆盖两类可通过 FIT 通道互补的数据：
+- 活动（activities）：见 app/services/region_activity.py，按窗口内两区全量
+  活动列表（beginTimestamp）对比，互相上传缺失的原始 FIT；
+- 健康（wellness）：睡眠 / 心率 / 压力 / 身体电量 / 血氧 / 呼吸 / 步数等
+  每日监控原始 FIT，见下方说明。
 
-模块⑤「双区全量对比、互相补全」：
+两类结果汇总到同一条日志（kind="health"），设置项与其它模块均不受影响。
+
+健康数据「双区全量对比、互相补全」：
 - 下载：GET {connectapi}/download-service/files/wellness/{YYYY-MM-DD}（按 UTC
   日期逐日请求，返回 zip，内含当日全部监控 FIT）。中国区与国际区各下载一份，
   得到两区在所选周期内的**全量**文件集合；双时间戳 /wellness/{start}/{end}
@@ -345,32 +350,64 @@ def run_health_sync(session_factory, garmin) -> SyncLog:
             detail.append(f"服务端已存在 {dup_remote} 个（补记已同步）")
         if errors:
             detail.append("补全失败(" + str(len(errors)) + "): " + "; ".join(errors))
+        # ---- ⑤ 活动数据：两区全量对比、互相补全（与健康数据汇总到同一日志） ----
+        from app.services.region_activity import sync_activities
+
+        try:
+            act = sync_activities(session, cn, intl, window)
+        except Exception as e:  # noqa: BLE001
+            logger.exception("活动数据互补过程异常：%s", e)
+            act = {
+                "total": 0, "both": 0,
+                "china_synced": 0, "intl_synced": 0, "failed": 0,
+                "unavailable": True,
+                "detail": [f"活动数据互补异常：{str(e)[:200]}"],
+            }
+        log.act_count = act["total"]
+        log.act_both = act["both"]
+        log.act_china_synced = act["china_synced"]
+        log.act_intl_synced = act["intl_synced"]
+        log.act_failed = act["failed"]
+        detail.extend(act["detail"])
+
+        if len(all_hashes) == 0 and not (cn_err_days or intl_err_days):
+            # 整个窗口两区都无健康数据（404 已在下载层吞掉），正常完成
+            detail.append("该时间段两区均无健康数据文件（Garmin 返回 404）")
         log.error = "; ".join(detail)[:4000]
 
-        if len(all_hashes) == 0:
-            if cn_err_days or intl_err_days:
-                log.status = "error"
-            else:
-                # 整个窗口两区都无健康数据（404 已在下载层吞掉），正常完成
-                log.status = "success"
-                log.error = "该时间段两区均无健康数据文件（Garmin 返回 404）"
+        if len(all_hashes) == 0 and (cn_err_days or intl_err_days):
+            status = "error"
         elif intl is None or cn_err_days or intl_err_days:
-            log.status = "partial"
+            status = "partial"
         elif log.upload_failed == 0:
-            log.status = "success"
+            status = "success"
         elif log.synced_count > 0:
-            log.status = "partial"
+            status = "partial"
         else:
-            log.status = "error"
+            status = "error"
+        # 活动互补失败或未执行（未登录/列表读取失败）时整体降为 partial；
+        # 反过来健康部分全失败但活动有补全成功，也不应误标成 error。
+        if act.get("unavailable") or act.get("failed"):
+            if status == "success":
+                status = "partial"
+        if status == "error" and (
+            act.get("china_synced") or act.get("intl_synced")
+        ):
+            status = "partial"
+        log.status = status
 
         log.finished_at = datetime.utcnow()
         session.commit()
         logger.info(
-            "健康数据同步结束：全量 %d 个（下载 %d 个，已完整 %d 个），"
-            "补全 中国区 %d 失败 %d / 国际区 %d 失败 %d，已传过跳过 %d 个%s",
+            "模块⑤全量同步结束：健康 全量 %d 个（下载 %d 个，已完整 %d 个），"
+            "补全 中国区 %d 失败 %d / 国际区 %d 失败 %d，已传过跳过 %d 个；"
+            "活动 全量 %d 条（已完整 %d 条），补全 中国区 %d / 国际区 %d，"
+            "失败 %d 条%s",
             len(all_hashes), log.fetched_count, len(both),
             log.china_synced, log.china_failed,
             log.intl_synced, log.intl_failed, skipped_marked,
+            log.act_count, log.act_both,
+            log.act_china_synced, log.act_intl_synced, log.act_failed,
             f"，原因：{log.error}" if log.error else "",
         )
     except Exception as e:

@@ -1,7 +1,8 @@
-"""佳明健康数据同步相关 API：中国区 ⇄ 国际区全量对比、互相补全。
+"""佳明双区全量数据同步相关 API：中国区 ⇄ 国际区对比、互相补全。
 
-同步范围：睡眠 / 心率 / 压力 / 身体电量 / 血氧 / 呼吸 / 步数。
-设置/触发/状态/日志均独立于活动与体重同步；启用开关与周期选项保持不变。
+同步范围：活动 FIT + 每日监控 FIT（睡眠 / 心率 / 压力 / 身体电量 /
+血氧 / 呼吸 / 步数）。设置/触发/状态/日志独立于其它模块；
+启用开关与周期选项保持不变。
 """
 from datetime import datetime
 
@@ -16,9 +17,9 @@ from app.schemas import HealthSettingsReq
 
 router = APIRouter()
 
-# 健康同步固定每天 03:00 自动执行（写死，界面无需配置）
+# 全量同步固定每天 03:00 自动执行（写死，界面无需配置）
 HEALTH_SCHEDULE_FIXED = "每天 03:00"
-HEALTH_TARGET_FIXED = "中国区 ⇄ 国际区（全量对比、互相补全）"
+HEALTH_TARGET_FIXED = "中国区 ⇄ 国际区（活动 + 健康，全量对比、互相补全）"
 
 
 def _health_payload(st) -> dict:
@@ -75,6 +76,6 @@ def health_sync_log(limit: int = Query(20, ge=1, le=100)):
 
 @router.post("/api/health/sync/log")
 def health_sync_log_clear():
-    """清空健康数据同步日志。"""
+    """清空模块⑤全量数据同步日志。"""
     clear_sync_logs("health")
     return {"ok": True}

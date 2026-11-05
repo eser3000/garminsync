@@ -57,6 +57,12 @@ class SyncLog(Base):
     igp_failed = mapped_column(Integer, default=0)  # iGPSPORT 上传失败条数
     igp_history_count = mapped_column(Integer, default=0)  # iGPSPORT 历史存在（不重复同步）条数
     igp_done = mapped_column(Integer, default=0)  # iGPSPORT 已上传过（去重跳过）条数
+    # 模块⑤活动互补统计（健康部分沿用上面的通用字段）
+    act_count = mapped_column(Integer, default=0)  # 活动：两区全量条数
+    act_both = mapped_column(Integer, default=0)  # 活动：两区均已完整条数
+    act_china_synced = mapped_column(Integer, default=0)  # 活动：补全到中国区成功条数
+    act_intl_synced = mapped_column(Integer, default=0)  # 活动：补全到国际区成功条数
+    act_failed = mapped_column(Integer, default=0)  # 活动：互补失败条数
     error = mapped_column(Text, default="")  # 抓取失败 + 同步失败的原因明细
 
 
@@ -144,6 +150,30 @@ class SyncedHealthTarget(Base):
 
     __table_args__ = (
         UniqueConstraint("file_hash", "region", name="uq_synced_health_target"),
+    )
+
+
+class SyncedRegionActivity(Base):
+    """活动数据双区补全记录：按 (活动键, 目标区) 去重。
+
+    活动键为活动开始时间 beginTimestamp（毫秒字符串）；同一个活动可能需要
+    分别补全到中国区与国际区，旧 SyncedActivity 表以中国区 activityId 为主键
+    （模块①单向同步用），无法表达目标区，故另建本表。
+    create_all 会自动为旧库建表，无需数据迁移。
+    """
+
+    __tablename__ = "synced_region_activities"
+
+    id = mapped_column(Integer, primary_key=True)
+    activity_key = mapped_column(String)  # beginTimestamp（毫秒）字符串
+    region = mapped_column(String)  # 'china' | 'intl'（补全的目标区）
+    source_activity_id = mapped_column(String, default="")
+    synced_at = mapped_column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "activity_key", "region", name="uq_synced_region_activity"
+        ),
     )
 
 

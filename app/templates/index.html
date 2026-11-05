@@ -86,8 +86,8 @@
 
         <!-- 健康数据同步 -->
         <section class="card">
-          <h2>⑤ 佳明健康数据同步（双区全量对比 · 互相补全）</h2>
-          <p class="muted">同步范围：睡眠 / 心率 / 压力 / 身体电量 / 血氧 / 呼吸 / 步数。按所选周期读取中国区与国际区的全量每日监控 FIT，按文件内容对比后，把对方缺失的数据互相上传补全</p>
+          <h2>⑤ 佳明双区全量数据同步（活动 + 健康 · 互相补全）</h2>
+          <p class="muted">按所选周期读取中国区与国际区的全量活动 FIT 和每日监控 FIT（睡眠 / 心率 / 压力 / 身体电量 / 血氧 / 呼吸 / 步数），对比后把对方缺失的数据互相上传补全</p>
           <label class="switch">
             <input id="health-enabled" type="checkbox" /> 启用自动同步
           </label>
@@ -96,7 +96,7 @@
           </label>
           <p class="muted">固定每天 03:00 自动同步；两区均需登录才能对比补全，国际区未登录时仅下载中国区数据不上传</p>
           <div id="health-sync-status" class="status"></div>
-          <button id="health-sync-now">立即同步健康数据</button>
+          <button id="health-sync-now">立即同步全量数据</button>
           <h3 class="log-head">最近日志<button id="health-log-clear" class="clear-btn">清空日志</button></h3>
           <ul id="health-log" class="log"></ul>
         </section>
@@ -135,6 +135,6 @@
   </div>
 
   <div id="toast" class="toast" hidden></div>
-  <script src="/static/js/app.js?v=20261106a"></script>
+  <script src="/static/js/app.js?v=20261106b"></script>
 </body>
 </html>

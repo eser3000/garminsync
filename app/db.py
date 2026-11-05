@@ -53,6 +53,11 @@ def _migrate_columns():
             "igp_failed": "INTEGER DEFAULT 0",
             "igp_history_count": "INTEGER DEFAULT 0",
             "igp_done": "INTEGER DEFAULT 0",
+            "act_count": "INTEGER DEFAULT 0",
+            "act_both": "INTEGER DEFAULT 0",
+            "act_china_synced": "INTEGER DEFAULT 0",
+            "act_intl_synced": "INTEGER DEFAULT 0",
+            "act_failed": "INTEGER DEFAULT 0",
             "kind": "VARCHAR DEFAULT 'activity'",
         },
         "synced_activities": {

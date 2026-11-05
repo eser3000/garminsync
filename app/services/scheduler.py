@@ -5,9 +5,9 @@
   iGPSPORT 已登录时随活动同步一并执行，统计并入同一日志）
 - weight：小米体脂秤体重 -> 固定双区（国际区 + 中国区，受 settings.weight_enabled
   控制，固定每天本地 00:00 自动执行一次）
-- health：佳明中国区 ⇄ 国际区全量健康数据对比、互相补全（睡眠/心率/压力/
-  身体电量/血氧/呼吸/步数，受 settings.health_enabled 控制，固定每天本地
-  03:00 自动执行一次）
+- health：佳明中国区 ⇄ 国际区全量数据（活动 + 健康）对比、互相补全
+  （活动 FIT / 睡眠 / 心率 / 压力 / 身体电量 / 血氧 / 呼吸 / 步数，
+  受 settings.health_enabled 控制，固定每天本地 03:00 自动执行一次）
 """
 import asyncio
 import logging
@@ -230,6 +230,11 @@ class SyncScheduler:
                 "intl_failed": last.intl_failed,
                 "china_synced": last.china_synced,
                 "china_failed": last.china_failed,
+                "act_count": last.act_count,
+                "act_both": last.act_both,
+                "act_china_synced": last.act_china_synced,
+                "act_intl_synced": last.act_intl_synced,
+                "act_failed": last.act_failed,
                 "igp_history_count": last.igp_history_count,
                 "igp_synced": last.igp_synced,
                 "igp_failed": last.igp_failed,

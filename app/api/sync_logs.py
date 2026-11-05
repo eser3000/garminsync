@@ -29,6 +29,11 @@ def _serialize_log(r: SyncLog) -> dict:
         "igp_synced": r.igp_synced,
         "igp_failed": r.igp_failed,
         "igp_done": r.igp_done,
+        "act_count": r.act_count,
+        "act_both": r.act_both,
+        "act_china_synced": r.act_china_synced,
+        "act_intl_synced": r.act_intl_synced,
+        "act_failed": r.act_failed,
         "error": r.error,
     }
 

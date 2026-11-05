@@ -234,27 +234,28 @@ function renderWeightSync(s) {
   el.innerHTML = txt;
 }
 
-// ---- 健康数据同步（固定每天 03:00，中国区 ⇄ 国际区全量对比、互相补全） ----
-// 健康同步摘要：全量 N 个 ｜ 中国区/国际区 补全 X 失败 Y ｜ 两区已完整 H
+// ---- 模块⑤ 双区全量数据同步（固定每天 03:00，活动 + 健康 互相补全） ----
+// 摘要：健康/活动 各自的全量、双向补全与失败数
 function healthSummary(r) {
   // 兼容升级前的单向日志（只有 fetched/synced/upload_failed）
   const legacy = !r.read_count && !r.china_synced && !r.intl_synced
-    && !r.china_failed && !r.intl_failed && !r.history_count;
+    && !r.china_failed && !r.intl_failed && !r.history_count && !r.act_count;
   if (legacy) {
     return `下载 ${r.fetched_count || 0} 个 ｜ 上传成功 ${r.synced_count || 0} 个 ｜ 失败 ${r.upload_failed || 0} 个`;
   }
   const parts = [];
-  parts.push(`全量 ${r.read_count || 0} 个`);
-  parts.push(`中国区 补全 ${r.china_synced || 0} 失败 ${r.china_failed || 0}`);
-  parts.push(`国际区 补全 ${r.intl_synced || 0} 失败 ${r.intl_failed || 0}`);
-  parts.push(`两区已完整 ${r.history_count || 0}`);
+  parts.push(`健康 全量 ${r.read_count || 0} 个 ｜ 补中国区 ${r.china_synced || 0} 失败 ${r.china_failed || 0} ｜ 补国际区 ${r.intl_synced || 0} 失败 ${r.intl_failed || 0}`);
+  if (r.act_count || r.act_china_synced || r.act_intl_synced || r.act_failed) {
+    parts.push(`活动 全量 ${r.act_count || 0} 条 ｜ 补中国区 ${r.act_china_synced || 0} ｜ 补国际区 ${r.act_intl_synced || 0} ｜ 失败 ${r.act_failed || 0}`);
+  }
+  parts.push(`已完整 健康 ${r.history_count || 0} / 活动 ${r.act_both || 0}`);
   if (r.intl_history_count) parts.push(`已传过跳过 ${r.intl_history_count}`);
   return parts.join(" ｜ ");
 }
 
 function renderHealthSync(s) {
   const el = $("health-sync-status");
-  let txt = `同步方式：中国区 ⇄ 国际区 全量对比、互相补全 ｜ 自动同步：${s.enabled ? "已启用（每天 03:00）" : "已停用"}`;
+  let txt = `同步方式：中国区 ⇄ 国际区 全量数据（活动 + 健康）对比、互相补全 ｜ 自动同步：${s.enabled ? "已启用（每天 03:00）" : "已停用"}`;
   if (s.next_run_at) txt += ` ｜ 下次：${fmtTime(s.next_run_at)}`;
   if (s.last_sync) {
     const ls = s.last_sync;
