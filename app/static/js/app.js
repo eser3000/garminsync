@@ -234,15 +234,27 @@ function renderWeightSync(s) {
   el.innerHTML = txt;
 }
 
-// ---- 健康数据同步（固定每天 03:00，中国区 -> 国际区） ----
-// 健康同步摘要：下载 N 个 ｜ 上传成功 N 个 ｜ 失败 N 个
+// ---- 健康数据同步（固定每天 03:00，中国区 ⇄ 国际区全量对比、互相补全） ----
+// 健康同步摘要：全量 N 个 ｜ 中国区/国际区 补全 X 失败 Y ｜ 两区已完整 H
 function healthSummary(r) {
-  return `下载 ${r.fetched_count || 0} 个 ｜ 上传成功 ${r.synced_count || 0} 个 ｜ 失败 ${r.upload_failed || 0} 个`;
+  // 兼容升级前的单向日志（只有 fetched/synced/upload_failed）
+  const legacy = !r.read_count && !r.china_synced && !r.intl_synced
+    && !r.china_failed && !r.intl_failed && !r.history_count;
+  if (legacy) {
+    return `下载 ${r.fetched_count || 0} 个 ｜ 上传成功 ${r.synced_count || 0} 个 ｜ 失败 ${r.upload_failed || 0} 个`;
+  }
+  const parts = [];
+  parts.push(`全量 ${r.read_count || 0} 个`);
+  parts.push(`中国区 补全 ${r.china_synced || 0} 失败 ${r.china_failed || 0}`);
+  parts.push(`国际区 补全 ${r.intl_synced || 0} 失败 ${r.intl_failed || 0}`);
+  parts.push(`两区已完整 ${r.history_count || 0}`);
+  if (r.intl_history_count) parts.push(`已传过跳过 ${r.intl_history_count}`);
+  return parts.join(" ｜ ");
 }
 
 function renderHealthSync(s) {
   const el = $("health-sync-status");
-  let txt = `同步方向：中国区 → 国际区 ｜ 自动同步：${s.enabled ? "已启用（每天 03:00）" : "已停用"}`;
+  let txt = `同步方式：中国区 ⇄ 国际区 全量对比、互相补全 ｜ 自动同步：${s.enabled ? "已启用（每天 03:00）" : "已停用"}`;
   if (s.next_run_at) txt += ` ｜ 下次：${fmtTime(s.next_run_at)}`;
   if (s.last_sync) {
     const ls = s.last_sync;

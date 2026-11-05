@@ -1,17 +1,22 @@
-"""健康数据同步编排：将中国区每日监控数据原始 FIT 转发上传到国际区。
+"""健康数据同步编排：对比佳明中国区与国际区的全量每日监控数据，互相补全。
 
 同步范围：睡眠 / 心率 / 压力 / 身体电量 / 血氧 / 呼吸 / 步数等每日监控数据
-（即 Garmin 手表记录的 wellness / daily monitoring 数据）。
+（Garmin 手表记录的 wellness / daily monitoring 原始 FIT）。
 
-技术方案对齐开源项目 GarminDB / garmin-daily-monitor 等社区验证过的做法：
-- 下载：GET {connectapi}/download-service/files/wellness/{YYYY-MM-DD}
-  按单日（UTC 日期）逐日请求，返回 zip，内含每日监控（monitor 类型）的
-  原始 FIT（睡眠/心率/压力/血氧/身体电量/呼吸/步数均在其中）。
-  注意：双时间戳参数格式 /wellness/{start}/{end} 要求毫秒级时间戳，
-  传秒级时间戳会被解析成 1970 年导致全部 404（此前在中国区持续复现）。
-- 上传：POST {connectapi}/upload-service/upload/.fit（与活动同步同一通道，
-  直接转发原始 FIT，避免自行构造消息导致数据失真）。
-- 去重：按文件内容 SHA256 记录在 synced_health 表，重复文件不再上传。
+模块⑤「双区全量对比、互相补全」：
+- 下载：GET {connectapi}/download-service/files/wellness/{YYYY-MM-DD}（按 UTC
+  日期逐日请求，返回 zip，内含当日全部监控 FIT）。中国区与国际区各下载一份，
+  得到两区在所选周期内的**全量**文件集合；双时间戳 /wellness/{start}/{end}
+  要求毫秒级时间戳，传秒级会被解析成 1970 年导致全部 404，故仍按单日请求。
+- 对比：以文件内容 SHA256 作为数据身份，两区集合的并集＝全量数据；只存在于
+  A 区的文件即判定 B 区缺失，从 A 区取原始 FIT 上传到 B 区，双向互补，
+  最终两区都持有全量数据。
+- 设置项不变：仍受 health_enabled 控制、固定每天 03:00、周期仍由
+  health_sync_window 决定（1day/1week/1month/3months），中国区必须登录；
+  国际区未登录时降级为「仅下载中国区、不上传」。
+- 去重：以平台真实数据对比为主判据；另按 (内容哈希, 目标区) 记录已上传过的
+  文件，避免 Garmin 归档不收录原始 FIT（此时服务端只会返回 409 Duplicate）
+  造成每轮重复 POST。服务端明确返回 Duplicate 也补记为已同步。
 """
 import hashlib
 import io
@@ -21,18 +26,25 @@ import zipfile
 from datetime import datetime
 
 import app.config as config
-from app.models import SyncedHealth, SyncLog, get_setting, prune_sync_logs
+from app.models import (
+    SyncedHealthTarget,
+    SyncLog,
+    get_setting,
+    prune_sync_logs,
+)
 from app.time_utils import cn_date
 from garth.exc import GarthHTTPError
 
 logger = logging.getLogger("garminsync")
 
+TARGET_NAMES = {"china": "中国区", "intl": "国际区"}
 
-def _download_wellness(cn, start: int, end: int) -> list:
-    """从中国区下载单日（UTC 日期）的每日监控数据 zip。
 
-    参数为秒级时间戳，仅用于确定日期（同一天），实际请求按 GarminDB
-    验证过的单日格式：/download-service/files/wellness/{YYYY-MM-DD}。
+def _download_wellness(client, start: int, end: int) -> list:
+    """从一个 Garmin 区域下载单日（UTC 日期）的每日监控数据 zip。
+
+    参数 start/end 为秒级时间戳，仅用于确定日期（同一天），实际请求按
+    GarminDB 验证过的单日格式：/download-service/files/wellness/{YYYY-MM-DD}。
 
     返回 [(filename, fit_bytes), ...]；zip 内仅取 .fit 成员。
 
@@ -43,7 +55,7 @@ def _download_wellness(cn, start: int, end: int) -> list:
     # 日志展示统一用东八区日期（cn_date），与窗口日志一致。
     date = datetime.utcfromtimestamp(start).strftime("%Y-%m-%d")
     try:
-        data = cn.download(f"/download-service/files/wellness/{date}")
+        data = client.download(f"/download-service/files/wellness/{date}")
     except GarthHTTPError as exc:
         resp = getattr(getattr(exc, "error", None), "response", None)
         if resp is not None and resp.status_code == 404:
@@ -70,9 +82,53 @@ def _download_wellness(cn, start: int, end: int) -> list:
     return files
 
 
-def _upload_fit(intl, fp):
-    """将 FIT 文件上传到国际区 Garmin Connect（与活动同步同通道）。"""
-    return intl.connectapi(
+def _collect_region(client, start: int, end: int, region_name: str):
+    """逐日下载一个区域在窗口内的全量健康 FIT。
+
+    返回 (files, downloaded, no_data_days, error_days, errors)：
+    - files: {sha256: (filename, fit_bytes)}，同一内容的文件只保留一份；
+    - downloaded: 下载到的文件总数（按内容去重前）；
+    - no_data_days: Garmin 返回 404 的天数；
+    - error_days/errors: 非 404 的下载失败天数与明细。
+
+    单日失败只记录并继续；调用方据此判定该区域集合是否完整——集合不完整时
+    不向该区域补全，避免把「没读到」误判成「对方独有」而重复上传。
+    """
+    files: dict[str, tuple[str, bytes]] = {}
+    downloaded = 0
+    no_data_days = 0
+    error_days = 0
+    errors = []
+    for day_start in range(start, end, 86400):
+        day_end = min(day_start + 86400, end)
+        try:
+            day_files = _download_wellness(client, day_start, day_end)
+        except Exception as e:  # noqa: BLE001
+            error_days += 1
+            errors.append(f"{region_name} {cn_date(day_start)}: {str(e)[:160]}")
+            logger.warning(
+                "健康数据 %s %s 下载失败：%s", region_name, cn_date(day_start), e
+            )
+            continue
+        if not day_files:
+            no_data_days += 1
+            continue
+        downloaded += len(day_files)
+        for name, fit_bytes in day_files:
+            digest = hashlib.sha256(fit_bytes).hexdigest()
+            files.setdefault(digest, (name, fit_bytes))
+    logger.info(
+        "健康数据：%s 下载 %d 个文件，按内容去重后 %d 个（无数据 %d 天，失败 %d 天）",
+        region_name, downloaded, len(files), no_data_days, error_days,
+    )
+    return files, downloaded, no_data_days, error_days, errors
+
+
+def _upload_fit(client, fit_bytes: bytes, name: str):
+    """将 FIT 文件上传到指定区域 Garmin Connect（与活动同步同一通道）。"""
+    fp = io.BytesIO(fit_bytes)
+    fp.name = name
+    return client.connectapi(
         "/upload-service/upload/.fit",
         method="POST",
         files={"userfile": (fp.name, fp, "application/octet-stream")},
@@ -91,11 +147,41 @@ def _is_duplicate_error(text: str) -> bool:
     """判断 Garmin 响应是否为“文件已存在”的重复导入错误（409 Duplicate）。
 
     健康数据重复上传时 Garmin 返回 409 + "Duplicate Metrics File." /
-    "Duplicate Wellness File."，即服务端已存在该文件。此时若本地
-    synced_health 没有对应 SHA256 记录（例如数据库记录曾丢失），
-    文件会被反复重试上传并一直报错，应视为“已同步过”并补记去重。
+    "Duplicate Wellness File."，即服务端已存在该文件，应视为“已同步过”。
     """
     return "duplicate" in (text or "").lower()
+
+
+def _try_upload(client, fit_bytes: bytes, name: str) -> tuple[bool, bool, str]:
+    """上传单个 FIT，返回 (ok, duplicate, message)。
+
+    duplicate=True 表示服务端已存在该文件（无需再次上传），ok 仍为 True。
+    """
+    try:
+        result = _upload_fit(client, fit_bytes, name)
+    except GarthHTTPError as exc:
+        # HTTP 层错误（如 409 Conflict）：响应体里通常带着 Garmin
+        # 拒绝导入的真实原因，必须带进日志才能定位。
+        resp = getattr(getattr(exc, "error", None), "response", None)
+        body = ""
+        if resp is not None:
+            try:
+                body = resp.text[:500]
+            except Exception:
+                body = ""
+        if _is_duplicate_error(body):
+            return True, True, "服务端已存在（重复导入）"
+        return False, False, f"{exc} {body}"[:300]
+    except Exception as e:  # noqa: BLE001
+        return False, False, str(e)[:300]
+
+    if not _upload_succeeded(result):
+        det = (result or {}).get("detailedImportResult", {}) or {}
+        msgs = " ".join(str(m) for m in (det.get("failures") or []))
+        if _is_duplicate_error(msgs):
+            return True, True, "服务端已存在（重复导入）"
+        return False, False, msgs[:300]
+    return True, False, ""
 
 
 def run_health_sync(session_factory, garmin) -> SyncLog:
@@ -104,7 +190,7 @@ def run_health_sync(session_factory, garmin) -> SyncLog:
     session.add(log)
     session.commit()
     try:
-        # 中国区登录是下载的前提（必须）；国际区可选，未登录则只下载、不上传
+        # 中国区登录是下载的前提（必须）；国际区未登录时降级为仅下载、不补全
         cn = garmin.get_client("china", "garmin.cn")
         if cn is None:
             log.status = "error"
@@ -116,7 +202,7 @@ def run_health_sync(session_factory, garmin) -> SyncLog:
 
         intl = garmin.get_client("intl", "garmin.com")  # 可选
 
-        # 同步周期：独立于活动同步，使用健康数据自己的周期设置（默认近 1 个月）
+        # 同步周期：仍使用健康数据自己的周期设置（选项与取值均不变）
         st = get_setting(session)
         window = config.SYNC_WINDOW_DAYS.get(
             st.health_sync_window, config.HEALTH_WINDOW_DAYS
@@ -124,138 +210,155 @@ def run_health_sync(session_factory, garmin) -> SyncLog:
         end = int(time.time())
         start = end - window * 86400
 
-        synced = 0          # 上传成功
-        upload_failed = 0   # 上传失败
-        skipped = 0         # 国际区未登录未上传
-        dup = 0             # 已同步过跳过
-        dup_remote = 0      # 国际区已存在（重复文件），补记去重标记已同步
-        errors = []
-        fetched = 0         # 下载到的文件总数（含重复/跳过）
-        no_data_days = 0    # 无数据的天数（Garmin 404）
-
         logger.info(
-            "健康数据同步：窗口 %d 天（%s ~ %s，国际区已登录=%s）",
+            "健康数据同步：窗口 %d 天（%s ~ %s，国际区已登录=%s），双区全量对比补全",
             window,
             cn_date(start),
             cn_date(end),
             intl is not None,
         )
 
-        # 按天切分下载：每天一个请求，某天无数据（404）只跳过当天，不影响其他天；
-        # 每个文件按内容 SHA256 去重，已同步过的不再上传。
-        for day_start in range(start, end, 86400):
-            day_end = min(day_start + 86400, end)
-            files = _download_wellness(cn, day_start, day_end)
-            if not files:
-                no_data_days += 1
-                continue
-            fetched += len(files)
-            logger.info(
-                "健康数据：%s 下载 %d 个文件",
-                cn_date(day_start),
-                len(files),
+        # ---- ① 两区各自下载窗口内全量健康数据 ----
+        cn_files, cn_downloaded, cn_no_data, cn_err_days, cn_errors = (
+            _collect_region(cn, start, end, "中国区")
+        )
+        if intl is not None:
+            intl_files, intl_downloaded, intl_no_data, intl_err_days, intl_errors = (
+                _collect_region(intl, start, end, "国际区")
             )
-            for name, fit_bytes in files:
-                digest = hashlib.sha256(fit_bytes).hexdigest()
-                if (
-                    session.query(SyncedHealth)
-                    .filter_by(file_hash=digest)
-                    .first()
-                ):
-                    dup += 1
-                    continue
+        else:
+            intl_files, intl_downloaded = {}, 0
+            intl_no_data, intl_err_days, intl_errors = 0, 0, []
 
-                if intl is None:
-                    skipped += 1
-                    continue
+        # ---- ② 对比全量：并集＝全量数据，交集＝两区均已完整 ----
+        cn_hashes = set(cn_files)
+        intl_hashes = set(intl_files)
+        all_hashes = cn_hashes | intl_hashes
+        both = cn_hashes & intl_hashes
+        log.read_count = len(all_hashes)
+        log.fetched_count = cn_downloaded + intl_downloaded
+        log.history_count = len(both)
 
-                try:
-                    fp = io.BytesIO(fit_bytes)
-                    fp.name = name
-                    result = _upload_fit(intl, fp)
-                    if not _upload_succeeded(result):
-                        det = (result or {}).get("detailedImportResult", {}) or {}
-                        msgs = " ".join(str(m) for m in (det.get("failures") or []))
-                        if _is_duplicate_error(msgs):
-                            # 服务端已存在（重复导入）：补记去重，避免下次再试
-                            dup_remote += 1
-                            session.add(SyncedHealth(file_hash=digest, filename=name))
-                            session.commit()
-                            logger.warning(
-                                "健康数据 [%s] 国际区已存在（重复），标记为已同步",
-                                name,
-                            )
-                            continue
-                        upload_failed += 1
-                        errors.append(f"{name}:{msgs[:200]}")
-                        logger.warning("健康数据上传被拒 [%s]: %s", name, msgs[:200])
-                        continue
-                    session.add(SyncedHealth(file_hash=digest, filename=name))
-                    session.commit()
-                    synced += 1
-                except GarthHTTPError as exc:
-                    # HTTP 层错误（如 409 Conflict）：响应体里通常带着 Garmin
-                    # 拒绝导入的真实原因（文件类型不支持 / 数据冲突 / 重复导入），
-                    # 必须打进日志才能定位，仅打 str(exc) 只有状态码信息不足。
-                    resp = getattr(getattr(exc, "error", None), "response", None)
-                    body = ""
-                    if resp is not None:
-                        try:
-                            body = resp.text[:500]
-                        except Exception:
-                            body = ""
-                    if _is_duplicate_error(body):
-                        # 服务端已存在该文件（本地记录可能曾丢失）：补记去重，
-                        # 标记为已同步，避免每次同步都重复尝试上传同一文件。
-                        dup_remote += 1
-                        session.add(SyncedHealth(file_hash=digest, filename=name))
-                        session.commit()
-                        logger.warning(
-                            "健康数据 [%s] 国际区已存在（重复），标记为已同步%s",
-                            name, f" | 响应体: {body[:120]}" if body else "",
-                        )
-                        continue
-                    upload_failed += 1
-                    errors.append(f"{name}:{exc} {body}")
-                    logger.warning(
-                        "健康数据上传失败 [%s]: %s%s", name, exc,
-                        f" | 响应体: {body}" if body else "",
+        # 读取失败过的区域集合不完整：不向该区域补全，避免重复上传
+        trusted = {
+            "china": cn_err_days == 0,
+            "intl": intl is not None and intl_err_days == 0,
+        }
+
+        # ---- ③ 组装互相补全任务（只存在于 A 区 → 上传到 B 区） ----
+        pending = []
+        for digest in sorted(all_hashes):
+            if digest in both:
+                continue
+            if digest in cn_files:
+                if trusted["intl"]:
+                    name, fit_bytes = cn_files[digest]
+                    pending.append(("intl", intl, name, fit_bytes, digest))
+            elif trusted["china"]:
+                name, fit_bytes = intl_files[digest]
+                pending.append(("china", cn, name, fit_bytes, digest))
+        logger.info(
+            "健康数据对比：全量 %d 个（中国区 %d / 国际区 %d），两区均已完整 %d 个，待互相补全 %d 个",
+            len(all_hashes), len(cn_hashes), len(intl_hashes), len(both),
+            len(pending),
+        )
+
+        # ---- ④ 逐区补全；按 (hash, region) 去重，避免重复 POST ----
+        marks = {
+            (h, r)
+            for (h, r) in session.query(
+                SyncedHealthTarget.file_hash, SyncedHealthTarget.region
+            ).all()
+        }
+        counters = {
+            "china": {"synced": 0, "failed": 0},
+            "intl": {"synced": 0, "failed": 0},
+        }
+        errors = []
+        skipped_marked = 0   # 已补全过、平台归档暂未收录，跳过重复上传
+        dup_remote = 0       # 服务端已存在（Duplicate），补记为已同步
+
+        for region, client, name, fit_bytes, digest in pending:
+            key = (digest, region)
+            if key in marks:
+                skipped_marked += 1
+                continue
+            ok, duplicate, msg = _try_upload(client, fit_bytes, name)
+            if ok:
+                session.add(
+                    SyncedHealthTarget(
+                        file_hash=digest, region=region, filename=name
                     )
-                except Exception as e:
-                    upload_failed += 1
-                    errors.append(f"{name}:{e}")
-                    logger.warning("健康数据上传失败 [%s]: %s", name, e)
+                )
+                session.commit()
+                marks.add(key)
+                counters[region]["synced"] += 1
+                if duplicate:
+                    dup_remote += 1
+                logger.info(
+                    "健康数据 [%s] 补全到%s%s",
+                    name, TARGET_NAMES[region],
+                    "（服务端已存在，补记去重）" if duplicate else "",
+                )
+            else:
+                counters[region]["failed"] += 1
+                errors.append(f"{name}→{TARGET_NAMES[region]}:{msg}")
+                logger.warning(
+                    "健康数据补全失败 [%s → %s]: %s",
+                    name, TARGET_NAMES[region], msg,
+                )
+
+        log.china_synced = counters["china"]["synced"]
+        log.china_failed = counters["china"]["failed"]
+        log.intl_synced = counters["intl"]["synced"]
+        log.intl_failed = counters["intl"]["failed"]
+        log.synced_count = log.china_synced + log.intl_synced
+        log.upload_failed = log.china_failed + log.intl_failed
+        log.intl_history_count = skipped_marked
 
         detail = []
-        if no_data_days:
-            detail.append(f"无数据跳过 {no_data_days} 天")
-        if intl is None and skipped:
+        if cn_no_data or intl_no_data:
             detail.append(
-                f"国际区未登录，已下载 {skipped} 个文件但未上传"
-                f"（登录国际区后再次同步即可上传）"
+                f"无数据跳过 中国区 {cn_no_data} 天 / 国际区 {intl_no_data} 天"
             )
-        if dup:
-            detail.append(f"已同步过，跳过 {dup} 个")
+        if intl is None:
+            detail.append(
+                "国际区未登录，仅下载中国区数据，未执行对比补全"
+                "（登录国际区后再次同步即可双向补全）"
+            )
+        if cn_err_days or intl_err_days:
+            detail.append(
+                f"下载失败 中国区 {cn_err_days} 天 / 国际区 {intl_err_days} 天"
+                "（失败区域本轮不向其补全，避免重复上传）"
+            )
+        if cn_errors or intl_errors:
+            detail.append(
+                "下载失败明细: " + "; ".join((cn_errors + intl_errors)[:10])
+            )
+        if both:
+            detail.append(f"两区均已完整 {len(both)} 个")
+        if skipped_marked:
+            detail.append(
+                f"已补全过、平台归档暂未收录 {skipped_marked} 个（跳过重复上传）"
+            )
         if dup_remote:
-            detail.append(
-                f"国际区已存在 {dup_remote} 个重复文件（本地记录缺失），已标记为已同步"
-            )
+            detail.append(f"服务端已存在 {dup_remote} 个（补记已同步）")
         if errors:
-            detail.append("上传失败(" + str(len(errors)) + "): " + "; ".join(errors))
-        log.fetched_count = fetched
-        log.synced_count = synced
-        log.upload_failed = upload_failed
+            detail.append("补全失败(" + str(len(errors)) + "): " + "; ".join(errors))
         log.error = "; ".join(detail)[:4000]
 
-        if fetched == 0:
-            # 整个窗口无健康数据（404 已在下载层吞掉），正常完成
-            log.status = "success"
-            log.error = "该时间段无健康数据文件（Garmin 返回 404）"
-        elif intl is None:
+        if len(all_hashes) == 0:
+            if cn_err_days or intl_err_days:
+                log.status = "error"
+            else:
+                # 整个窗口两区都无健康数据（404 已在下载层吞掉），正常完成
+                log.status = "success"
+                log.error = "该时间段两区均无健康数据文件（Garmin 返回 404）"
+        elif intl is None or cn_err_days or intl_err_days:
             log.status = "partial"
-        elif upload_failed == 0:
+        elif log.upload_failed == 0:
             log.status = "success"
-        elif synced > 0:
+        elif log.synced_count > 0:
             log.status = "partial"
         else:
             log.status = "error"
@@ -263,9 +366,11 @@ def run_health_sync(session_factory, garmin) -> SyncLog:
         log.finished_at = datetime.utcnow()
         session.commit()
         logger.info(
-            "健康数据同步结束：下载 %d 个，上传成功 %d 个，失败 %d 个，"
-            "未上传 %d 个，重复跳过 %d 个，服务端已存在补记 %d 个%s",
-            fetched, synced, upload_failed, skipped, dup, dup_remote,
+            "健康数据同步结束：全量 %d 个（下载 %d 个，已完整 %d 个），"
+            "补全 中国区 %d 失败 %d / 国际区 %d 失败 %d，已传过跳过 %d 个%s",
+            len(all_hashes), log.fetched_count, len(both),
+            log.china_synced, log.china_failed,
+            log.intl_synced, log.intl_failed, skipped_marked,
             f"，原因：{log.error}" if log.error else "",
         )
     except Exception as e:

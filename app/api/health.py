@@ -1,7 +1,7 @@
-"""佳明健康数据同步相关 API：中国区每日健康数据 -> 国际区。
+"""佳明健康数据同步相关 API：中国区 ⇄ 国际区全量对比、互相补全。
 
 同步范围：睡眠 / 心率 / 压力 / 身体电量 / 血氧 / 呼吸 / 步数。
-设置/触发/状态/日志均独立于活动与体重同步。
+设置/触发/状态/日志均独立于活动与体重同步；启用开关与周期选项保持不变。
 """
 from datetime import datetime
 
@@ -18,7 +18,7 @@ router = APIRouter()
 
 # 健康同步固定每天 03:00 自动执行（写死，界面无需配置）
 HEALTH_SCHEDULE_FIXED = "每天 03:00"
-HEALTH_TARGET_FIXED = "国际区"
+HEALTH_TARGET_FIXED = "中国区 ⇄ 国际区（全量对比、互相补全）"
 
 
 def _health_payload(st) -> dict:

@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Float, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, Float, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
@@ -112,7 +112,11 @@ class SyncedWeight(Base):
 
 
 class SyncedHealth(Base):
-    """已同步的健康数据 FIT 文件（按内容 SHA256 去重）。"""
+    """已同步的健康数据 FIT 文件（按内容 SHA256 去重）。
+
+    单向同步时代使用，仅按 file_hash 唯一。改为双区互相补全后不再写入，
+    保留模型只是为了兼容已有数据库表。
+    """
 
     __tablename__ = "synced_health"
 
@@ -120,6 +124,27 @@ class SyncedHealth(Base):
     file_hash = mapped_column(String, unique=True)  # FIT 内容 SHA256
     filename = mapped_column(String, default="")  # zip 内文件名
     synced_at = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class SyncedHealthTarget(Base):
+    """健康数据双区补全记录：按 (文件内容哈希, 目标区) 去重。
+
+    模块⑤改为两区全量对比、互相补全后，同一个 FIT 可能需要分别补全到
+    中国区和国际区，旧的 SyncedHealth（仅按 file_hash 唯一）无法区分目标区，
+    故改用本表。create_all 会自动为新库/旧库建表，无需数据迁移。
+    """
+
+    __tablename__ = "synced_health_targets"
+
+    id = mapped_column(Integer, primary_key=True)
+    file_hash = mapped_column(String)  # FIT 内容 SHA256
+    region = mapped_column(String)  # 'china' | 'intl'（补全的目标区）
+    filename = mapped_column(String, default="")
+    synced_at = mapped_column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("file_hash", "region", name="uq_synced_health_target"),
+    )
 
 
 def prune_sync_logs(session, kind: str, keep: int = 500) -> int:
